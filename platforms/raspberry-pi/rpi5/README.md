@@ -44,6 +44,9 @@ sudo ./install.sh --auto 256 25 y   # 256x192 @ 25fps
 - **Module config** for resolution and FPS stored in `/etc/modprobe.d/rs300.conf`
 - **`rs300-media-setup.service`** which enables the CSI-2 capture link on every boot
 
+For `rpicam-apps`, Picamera2 and other libcamera applications, also build the
+patched libcamera. See [libcamera and rpicam-apps](#libcamera-and-rpicam-apps).
+
 ## After Reboot
 
 Verify the module loaded and the camera enumerated:
@@ -89,12 +92,14 @@ sudo /usr/lib/rs300/rs300-media-setup.sh
 ```
 
 The CSI-2 receiver can route either to the ISP front end or to the bypass
-capture node, but not to both. This driver uses the bypass path, so the service
-drops the front end link each boot. If you are using the ISP for something else
-on the same camera, disable the service and set the links up yourself:
+capture node, but not to both. The YUYV tools on this page use the bypass path.
+libcamera uses the ISP path and sets up its own links each time it starts, so
+the two do not need the service disabled. After a libcamera application, run
+the service script once before you use the YUYV tools again (`rs300-stream`
+does this itself):
 
 ```bash
-sudo systemctl disable --now rs300-media-setup.service
+/usr/lib/rs300/rs300-media-setup.sh
 ```
 
 ### Confirm frames without a display
@@ -131,10 +136,10 @@ well past the startup climb; a shorter capture can end while the figure is still
 rising and look like a rate problem when there is none.
 
 Some modules send the same frame again and again after the stream starts,
-until they get an FFC. The capture above can then contain only identical
-frames although the pipeline is healthy. An FFC sent before the stream starts
-does not prevent this. Send the FFC while the capture runs, and discard the
-frames before it:
+until they get an FFC while they stream. The driver sends one at each stream
+start, before the first frame reaches the application. A static scene still
+changes very little from frame to frame. To prove that frames are live, send
+another FFC while the capture runs:
 
 ```bash
 ( sleep 5; v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl ffc_trigger=1 ) &
@@ -177,8 +182,7 @@ The viewer auto-detects the sensor resolution (256x192, 384x288, or 640x512) at 
 | `m` | Cycle scene mode (0..5) |
 | `a` | Toggle auto shutter |
 <!-- Disabled. Toggling the sensor to Y16 desyncs it from the viewer, whose
-     pipeline is fixed at YUYV. Y16 needs the ISP capture path, which this
-     platform does not set up.
+     pipeline is fixed at YUYV. For Y16, use a libcamera application.
 | `y` | Toggle output mode (YUV / Y16) |
 -->
 | `+` / `-` | Brightness +10 / -10 |
@@ -187,38 +191,59 @@ The viewer auto-detects the sensor resolution (256x192, 384x288, or 640x512) at 
 | `q` / ESC | Quit |
 | `Ctrl+C` | Quit (from launching terminal) |
 
-## libcamera (`cam`)
+## libcamera and rpicam-apps
 
-The libcamera package in Raspberry Pi OS cannot use this camera, so
-`cam --list` and `rpicam-hello --list` show no cameras. Its `rpi/pisp`
-pipeline handler claims the sensor, but it accepts only raw sensors and stops
-with `Failed to register camera rs300 10-003c: -22`.
-
-libcamera's `simple` pipeline handler can use the YUYV output. To build
-libcamera with that handler and a `cam` command that uses it, run:
+The libcamera package in Raspberry Pi OS cannot use this camera: `rpicam-hello
+--list-cameras` and `cam --list` show no cameras. To make `rpicam-apps`, `cam`,
+Picamera2 and GStreamer `libcamerasrc` work, build the patched libcamera:
 
 ```bash
 helpers/build-libcamera-rs300.sh
-cam --list
-cam -c1 --capture=600 --stream pixelformat=YUYV,width=384,height=288 \
-  --file=/dev/shm/cam/frame-#.yuv
+rpicam-hello --list-cameras
 ```
 
-The script applies `helpers/libcamera-simple-rp1-cfe.patch` to the Raspberry Pi
-libcamera tree, installs the result to `/opt/libcamera-rs300`, and installs a
-`cam` wrapper in `/usr/local/bin`. It does not change the system libcamera, so
-`rpicam-apps` and `/usr/bin/cam` work as before. They still do not list the
-rs300. The build takes about 1 minute on a Pi 5.
+Expected output:
 
-This `cam` has only the simple handler. Use `/usr/bin/cam` for other Raspberry
-Pi cameras. The first-frame freeze also applies here, so send an FFC during
-the capture (see "Black or frozen image").
+```
+0 : rs300 [384x288 MONO] (/base/axi/pcie@1000120000/rp1/i2c@88000/rs300@3c)
+    Modes: 'R16' : 384x288 [60.00 fps - (0, 0)/384x288 crop]
+```
 
-To remove it:
+The script builds the Raspberry Pi libcamera tree that matches the Raspberry Pi
+OS package (0.5.2+rpt20250903) with `helpers/libcamera-rs300.patch`, and
+installs it to `/usr/local`. The dynamic linker searches `/usr/local/lib`
+before `/usr/lib`, so every libcamera application loads this build. The system
+package is not changed. The build takes about 2 minutes on a Pi 5. If the
+system libcamera package is upgraded, run the script again with a matching
+`LIBCAMERA_REF`.
+
+libcamera uses the module's raw 16-bit output (Y16) and the Pi 5 ISP. The
+module's own image processing (colour palettes, detail enhancement, noise
+reduction) applies only to its YUYV output, so libcamera gives a grey image.
+The tuning file stretches each frame between the 1st and 95th percentile of its
+histogram. The module sets its own exposure; libcamera's exposure and gain
+settings have no effect.
+
+The patch does these things:
+
+- Adds a camera helper and a tuning file (`rs300.json`) for the rs300.
+- Ignores sensor formats that are not raw, so a sensor that also offers YUYV
+  can use the ISP.
+- Does not byte-swap 16-bit frames from the rs300. The module sends the least
+  significant byte first, which is already the order the ISP needs.
+- Adds a `ce_keep_median` option to `rpi.contrast`. With `0`, the contrast
+  stretch is linear between the two histogram points.
+
+The driver changes that libcamera needs are in `src/rs300.c`: a frame
+descriptor, so that the receiver accepts the module's Y16 lines; Y16 selected
+through the format; writable blanking and gain controls; a pixel rate that
+gives the real frame rate.
+
+To remove the build:
 
 ```bash
-sudo rm -rf /opt/libcamera-rs300 /usr/local/bin/cam
-rm -rf ~/libcamera-rs300
+grep -v '^#' ~/libcamera-rs300/build/meson-logs/install-log.txt | sudo xargs rm -f
+sudo ldconfig
 ```
 
 ## Configuration
@@ -264,7 +289,7 @@ The `dtoverlay=rs300` line must not be inside a conditional section such as
 
 ### Black or frozen image
 
-Some modules freeze on the first frame until FFC is triggered. `rs300-stream` does this automatically. To trigger manually, send the FFC while the stream runs. An FFC sent before the stream starts has no effect on this freeze:
+Some modules freeze on the first frame until FFC is triggered while they stream. The driver sends an FFC at each stream start. To trigger one manually, send it while the stream runs. An FFC sent before the stream starts has no effect on this freeze:
 
 ```bash
 v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl ffc_trigger=1
@@ -314,5 +339,5 @@ sudo reboot
 | `helpers/rs300-stream.py` | Live viewer (GTK + GStreamer) |
 | `helpers/rs300-media-setup.sh` | Enables the CSI-2 capture link |
 | `helpers/rs300-media-setup.service` | Runs the capture link setup at boot |
-| `helpers/build-libcamera-rs300.sh` | Builds libcamera with the simple pipeline handler for `cam` |
-| `helpers/libcamera-simple-rp1-cfe.patch` | Adds `rp1-cfe` to the simple pipeline handler |
+| `helpers/build-libcamera-rs300.sh` | Builds and installs libcamera with rs300 support |
+| `helpers/libcamera-rs300.patch` | libcamera changes for rs300 (helper, tuning, pipeline) |
