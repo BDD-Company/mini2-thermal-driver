@@ -22,6 +22,7 @@
 #include <linux/version.h>
 #include <linux/workqueue.h>
 #include <media/media-entity.h>
+#include <media/mipi-csi2.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
@@ -36,8 +37,13 @@
 //80M (clk)* 2(double ) *2 (lan) /8
 
 #define RS300_LINK_RATE (80 * 1000 * 1000)       /* 80MHz link rate matching device tree */
-#define RS300_PIXEL_RATE	(200 * 1000 * 1000)  /* 8-bit: conservative, validated at 384x288@60fps */
-#define RS300_PIXEL_RATE_16BIT	(400 * 1000 * 1000)  /* 16-bit: conservative, validated at 384x288@60fps */
+/*
+ * Blanking reported to userspace. The module has no blanking or pixel clock
+ * settings; these values only give libcamera a timing model in which
+ * (width + HBLANK) * (height + VBLANK) / PIXEL_RATE equals the frame period.
+ */
+#define RS300_HBLANK		100
+#define RS300_VBLANK		10
 #define RS300_BRIGHTNESS_MIN 0
 #define RS300_BRIGHTNESS_MAX 100
 #define RS300_BRIGHTNESS_STEP 10
@@ -695,25 +701,11 @@ static void rs300_reset_colorspace(struct v4l2_mbus_framefmt *fmt)
 	}
 }
 
-/* Calculate pixel rate based on format */
-static u64 rs300_get_pixel_rate(u32 format_code)
+/* Pixel rate that makes the reported line and frame timing match the fps. */
+static u64 rs300_get_pixel_rate(struct rs300 *rs300)
 {
-	switch (format_code) {
-	case MEDIA_BUS_FMT_Y16_1X16:
-		/* 16-bit monochrome format */
-		return RS300_PIXEL_RATE_16BIT;
-	case MEDIA_BUS_FMT_YUYV8_1X16:
-	case MEDIA_BUS_FMT_UYVY8_1X16:
-		/* 16-bit packed YUV formats require higher pixel rate */
-		return RS300_PIXEL_RATE_16BIT;
-	case MEDIA_BUS_FMT_YUYV8_2X8:
-	case MEDIA_BUS_FMT_UYVY8_2X8:
-		/* 8-bit dual lane formats use base pixel rate */
-		return RS300_PIXEL_RATE;
-	default:
-		/* Default to 16-bit rate for unknown formats */
-		return RS300_PIXEL_RATE_16BIT;
-	}
+	return (u64)(rs300->mode->width + RS300_HBLANK) *
+	       (rs300->mode->height + RS300_VBLANK) * fps;
 }
 
 static void rs300_set_default_format(struct rs300 *rs300)
@@ -1978,10 +1970,11 @@ static int rs300_set_ctrl(struct v4l2_ctrl *ctrl)
         ret = rs300_set_analog_output_fmt(rs300, ctrl->val);
         break;
     case V4L2_CID_EXPOSURE:
-        /* Exposure control for libcamera compatibility */
-        /* Thermal camera exposure is stored but not actively controlled via I2C */
-        dev_dbg(&client->dev, "Exposure set to %d lines (stored for libcamera)", ctrl->val);
-        ret = 0;  /* Success - value stored in control framework */
+    case V4L2_CID_ANALOGUE_GAIN:
+    case V4L2_CID_HBLANK:
+    case V4L2_CID_VBLANK:
+        /* For libcamera only: the module has no such settings */
+        ret = 0;
         break;
     default:
         dev_err(&client->dev, "Invalid control %d", ctrl->id);
@@ -2360,7 +2353,7 @@ static int rs300_set_pad_fmt(struct v4l2_subdev *sd,
 			
 			/* Update pixel rate control based on new format */
 			if (rs300->pixel_rate) {
-				u64 new_pixel_rate = rs300_get_pixel_rate(rs300->fmt.code);
+				u64 new_pixel_rate = rs300_get_pixel_rate(rs300);
 				__v4l2_ctrl_s_ctrl_int64(rs300->pixel_rate, new_pixel_rate);
 				dev_dbg(&client->dev, "Updated pixel rate to %llu for format 0x%x",
 					 new_pixel_rate, rs300->fmt.code);
@@ -2368,6 +2361,19 @@ static int rs300_set_pad_fmt(struct v4l2_subdev *sd,
 			
 			dev_info(&client->dev, "Set ACTIVE format: code=0x%x, %dx%d",
 				rs300->fmt.code, rs300->fmt.width, rs300->fmt.height);
+
+			/*
+			 * Y16 and YUYV are the module's output modes, so
+			 * switch it to match. get_fmt reports the format from
+			 * output_mode, so this keeps both in step.
+			 */
+			if (rs300->output_mode) {
+				int ret = __v4l2_ctrl_s_ctrl(rs300->output_mode,
+					rs300->fmt.code == MEDIA_BUS_FMT_Y16_1X16);
+				if (ret)
+					dev_warn(&client->dev,
+						 "Failed to set output mode: %d", ret);
+			}
 
 			/* Push the new format down to the CSI-2 receiver. */
 			rs300_propagate_fmt_to_sink(rs300);
@@ -2509,7 +2515,7 @@ static int rs300_set_stream(struct v4l2_subdev *sd, int enable)
             rs300->mode->width, rs300->mode->height,
             rs300->mode->max_fps.denominator, rs300->mode->max_fps.numerator);
         dev_dbg(&client->dev, "Pixel rate: %llu Hz, colorspace: %d",
-            rs300_get_pixel_rate(rs300->fmt.code), rs300->fmt.colorspace);
+            rs300_get_pixel_rate(rs300), rs300->fmt.colorspace);
     } else {
         dev_dbg(&client->dev, "Stream stop requested");
     }
@@ -2680,6 +2686,17 @@ static int rs300_set_stream(struct v4l2_subdev *sd, int enable)
                      stream_attempt + 1, STREAM_START_RETRIES);
             stream_success = 1;
             break;
+        }
+
+        /*
+         * The module repeats its first frame until it gets an FFC while it
+         * streams. An FFC before the stream starts does not clear this, so
+         * send one here, after the module has started sending frames.
+         */
+        ret = rs300_shutter_cal(rs300);
+        if (ret) {
+            dev_warn(&client->dev, "FFC after stream start failed: %d", ret);
+            ret = 0;
         }
 
         // Set streaming flag regardless - camera may still be delivering frames
@@ -2894,7 +2911,38 @@ static int rs300_set_selection(struct v4l2_subdev *sd,
 	return rs300_get_selection(sd, sd_state, sel);
 }
 
+/*
+ * The module tags its lines with the YUV422 8-bit data type in both output
+ * modes, also for Y16. Without this the receiver expects RAW16 for Y16, drops
+ * every line and returns empty frames.
+ */
+static int rs300_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
+				struct v4l2_mbus_frame_desc *fd)
+{
+	struct v4l2_subdev_format fmt = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+		.pad = IMAGE_PAD,
+	};
+	int ret;
+
+	if (pad != IMAGE_PAD)
+		return -EINVAL;
+
+	ret = rs300_get_pad_fmt(sd, NULL, &fmt);
+	if (ret)
+		return ret;
+
+	memset(fd, 0, sizeof(*fd));
+	fd->type = V4L2_MBUS_FRAME_DESC_TYPE_CSI2;
+	fd->num_entries = 1;
+	fd->entry[0].pixelcode = fmt.format.code;
+	fd->entry[0].bus.csi2.vc = 0;
+	fd->entry[0].bus.csi2.dt = MIPI_CSI2_DT_YUV422_8B;
+	return 0;
+}
+
 static const struct v4l2_subdev_pad_ops rs300_subdev_pad_ops = {
+	.get_frame_desc = rs300_get_frame_desc,
 	.enum_mbus_code = rs300_enum_mbus_code,
 	.get_fmt = rs300_get_pad_fmt,
 	.set_fmt = rs300_set_pad_fmt,
@@ -3156,8 +3204,8 @@ static int rs300_init_controls(struct rs300 *rs300)
     if (rs300->link_frequency)
         rs300->link_frequency->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
-    /* Initialize pixel rate based on default format (YUYV8_1X16) */
-    pixel_rate = rs300_get_pixel_rate(MEDIA_BUS_FMT_YUYV8_1X16);
+    /* Pixel rate follows the mode and fps (see rs300_get_pixel_rate) */
+    pixel_rate = rs300_get_pixel_rate(rs300);
     rs300->pixel_rate = v4l2_ctrl_new_std(ctrl_hdlr, NULL,
                                       V4L2_CID_PIXEL_RATE,
                                       pixel_rate, pixel_rate, 1, 
@@ -3168,22 +3216,21 @@ static int rs300_init_controls(struct rs300 *rs300)
 
     /* Add mandatory V4L2 controls for libcamera ISP integration */
     /* HBLANK: Horizontal blanking (pixels beyond active area per line) */
-    rs300->hblank = v4l2_ctrl_new_std(ctrl_hdlr, NULL,
+    /*
+     * HBLANK, VBLANK and ANALOGUE_GAIN have a single value but are writable:
+     * the libcamera IPA writes them every frame and fails on read-only
+     * controls. rs300_set_ctrl() accepts and ignores them.
+     */
+    rs300->hblank = v4l2_ctrl_new_std(ctrl_hdlr, &rs300_ctrl_ops,
                                       V4L2_CID_HBLANK,
-                                      100, 100, 1,  /* Fixed at 100 pixels */
-                                      100);
-
-    if (rs300->hblank)
-        rs300->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+                                      RS300_HBLANK, RS300_HBLANK, 1,
+                                      RS300_HBLANK);
 
     /* VBLANK: Vertical blanking (lines beyond active area per frame) */
-    rs300->vblank = v4l2_ctrl_new_std(ctrl_hdlr, NULL,
+    rs300->vblank = v4l2_ctrl_new_std(ctrl_hdlr, &rs300_ctrl_ops,
                                       V4L2_CID_VBLANK,
-                                      10, 10, 1,    /* Fixed at 10 lines */
-                                      10);
-
-    if (rs300->vblank)
-        rs300->vblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+                                      RS300_VBLANK, RS300_VBLANK, 1,
+                                      RS300_VBLANK);
 
     /* EXPOSURE: Mandatory for libcamera integration */
     /* Range: 1 to sensor height (varies by module: 512, 384, or 288) */
@@ -3194,12 +3241,9 @@ static int rs300_init_controls(struct rs300 *rs300)
 
     /* ANALOGUE_GAIN: Mandatory for libcamera integration */
     /* Fixed at 1 (thermal sensors don't have hardware gain) */
-    rs300->analogue_gain = v4l2_ctrl_new_std(ctrl_hdlr, NULL,
+    rs300->analogue_gain = v4l2_ctrl_new_std(ctrl_hdlr, &rs300_ctrl_ops,
                                              V4L2_CID_ANALOGUE_GAIN,
                                              1, 1, 1, 1);
-
-    if (rs300->analogue_gain)
-        rs300->analogue_gain->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
     rs300->brightness = v4l2_ctrl_new_std(ctrl_hdlr, &rs300_ctrl_ops,
                          V4L2_CID_BRIGHTNESS,
