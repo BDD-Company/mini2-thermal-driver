@@ -2347,6 +2347,15 @@ static int rs300_set_pad_fmt(struct v4l2_subdev *sd,
 			dev_dbg(&client->dev, "Set TRY format: code=0x%x, %dx%d",
 				framefmt->code, framefmt->width, framefmt->height);
 		} else {
+			/*
+			 * A new code switches the module's output mode, which
+			 * would corrupt a running stream.
+			 */
+			if (rs300->streaming && fmt->format.code != rs300->fmt.code) {
+				mutex_unlock(&rs300->mutex);
+				return -EBUSY;
+			}
+
 			/* Update the active format and mode */
 			rs300->fmt = fmt->format;
 			rs300->mode = mode;
