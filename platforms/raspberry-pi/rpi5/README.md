@@ -187,6 +187,40 @@ The viewer auto-detects the sensor resolution (256x192, 384x288, or 640x512) at 
 | `q` / ESC | Quit |
 | `Ctrl+C` | Quit (from launching terminal) |
 
+## libcamera (`cam`)
+
+The libcamera package in Raspberry Pi OS cannot use this camera, so
+`cam --list` and `rpicam-hello --list` show no cameras. Its `rpi/pisp`
+pipeline handler claims the sensor, but it accepts only raw sensors and stops
+with `Failed to register camera rs300 10-003c: -22`.
+
+libcamera's `simple` pipeline handler can use the YUYV output. To build
+libcamera with that handler and a `cam` command that uses it, run:
+
+```bash
+helpers/build-libcamera-rs300.sh
+cam --list
+cam -c1 --capture=600 --stream pixelformat=YUYV,width=384,height=288 \
+  --file=/dev/shm/cam/frame-#.yuv
+```
+
+The script applies `helpers/libcamera-simple-rp1-cfe.patch` to the Raspberry Pi
+libcamera tree, installs the result to `/opt/libcamera-rs300`, and installs a
+`cam` wrapper in `/usr/local/bin`. It does not change the system libcamera, so
+`rpicam-apps` and `/usr/bin/cam` work as before. They still do not list the
+rs300. The build takes about 1 minute on a Pi 5.
+
+This `cam` has only the simple handler. Use `/usr/bin/cam` for other Raspberry
+Pi cameras. The first-frame freeze also applies here, so send an FFC during
+the capture (see "Black or frozen image").
+
+To remove it:
+
+```bash
+sudo rm -rf /opt/libcamera-rs300 /usr/local/bin/cam
+rm -rf ~/libcamera-rs300
+```
+
 ## Configuration
 
 ```bash
@@ -280,3 +314,5 @@ sudo reboot
 | `helpers/rs300-stream.py` | Live viewer (GTK + GStreamer) |
 | `helpers/rs300-media-setup.sh` | Enables the CSI-2 capture link |
 | `helpers/rs300-media-setup.service` | Runs the capture link setup at boot |
+| `helpers/build-libcamera-rs300.sh` | Builds libcamera with the simple pipeline handler for `cam` |
+| `helpers/libcamera-simple-rp1-cfe.patch` | Adds `rp1-cfe` to the simple pipeline handler |

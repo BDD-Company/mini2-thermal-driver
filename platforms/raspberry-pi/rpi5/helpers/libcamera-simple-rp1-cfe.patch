@@ -1,0 +1,12 @@
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index 4f914be8..d594b18c 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -257,6 +257,7 @@ static const SimplePipelineInfo supportedDevices[] = {
+ 	{ "mtk-seninf", { { "mtk-mdp", 3 } }, false },
+ 	{ "mxc-isi", {}, false },
+ 	{ "qcom-camss", {}, true },
++	{ "rp1-cfe", {}, false },
+ 	{ "sun6i-csi", {}, false },
+ };
+ 
