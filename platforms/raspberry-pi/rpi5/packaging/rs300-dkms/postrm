@@ -8,6 +8,7 @@ if [ "$1" = remove ] || [ "$1" = purge ]; then
 	if [ -f "$CFG" ]; then
 		sed -i '/^dtoverlay=rs300$/d' "$CFG"
 	fi
+	rm -f /boot/firmware/overlays/rs300.dtbo
 	systemctl daemon-reload >/dev/null 2>&1 || true
 fi
 

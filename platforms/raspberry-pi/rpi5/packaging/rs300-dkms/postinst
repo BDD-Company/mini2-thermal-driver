@@ -6,7 +6,7 @@ NAME=rs300
 VERSION=@DKMS_VERSION@
 CFG=/boot/firmware/config.txt
 
-if [ "$1" = configure ]; then
+case "$1" in configure|abort-upgrade|abort-remove|abort-deconfigure)
 	# install.sh registered the module under the same name and version.
 	# Register it again from this package's source.
 	dkms remove -m "$NAME" -v "$VERSION" --all >/dev/null 2>&1 || true
@@ -16,6 +16,8 @@ if [ "$1" = configure ]; then
 			"(or the headers for $(uname -r)), then run:" >&2
 		echo "  sudo dpkg-reconfigure rs300-dkms" >&2
 	fi
+
+	cp /usr/lib/rs300/rs300.dtbo /boot/firmware/overlays/rs300.dtbo
 
 	# Enable the overlay. [all] closes a trailing [cm4]/[cm5] section,
 	# which would otherwise make a Pi 5 Model B ignore the line.
@@ -37,6 +39,7 @@ if [ "$1" = configure ]; then
 	systemctl enable rs300-media-setup.service >/dev/null 2>&1 || true
 
 	echo "rs300-dkms: reboot to load the driver."
-fi
+	;;
+esac
 
 exit 0

@@ -34,8 +34,10 @@ build_driver() {
 	install -D -m 644 "$RPI5/dkms.conf" "$st/usr/src/rs300-$DKMS_VERSION/dkms.conf"
 	install -D -m 644 "$RPI5/Makefile" "$st/usr/src/rs300-$DKMS_VERSION/Makefile"
 	install -D -m 644 "$RPI5/src/rs300.c" "$st/usr/src/rs300-$DKMS_VERSION/rs300.c"
-	mkdir -p "$st/boot/firmware/overlays"
-	dtc -@ -H epapr -O dtb -o "$st/boot/firmware/overlays/rs300.dtbo" \
+	# /boot/firmware is FAT: dpkg cannot replace files there on upgrade
+	# (no backup hard links), so postinst copies the overlay in.
+	mkdir -p "$st/usr/lib/rs300"
+	dtc -@ -H epapr -O dtb -o "$st/usr/lib/rs300/rs300.dtbo" \
 		"$RPI5/src/rs300-overlay.dts"
 	install -D -m 755 "$RPI5/helpers/rs300-stream.py" "$st/usr/bin/rs300-stream"
 	install -D -m 755 "$RPI5/helpers/rs300-media-setup.sh" \
