@@ -176,6 +176,11 @@ def _propagate_csi_format(width, height):
     driver builds and any setup where the driver's boot-time window did not
     land the format. The set_fmt calls are idempotent, so re-applying the
     current format here is harmless."""
+    # libcamera (rpicam-apps, cam) leaves the sensor in its raw Y16 mode.
+    # Setting YUYV on the sensor makes the driver switch the module back.
+    _run_v4l2(['v4l2-ctl', '--set-subdev-fmt',
+               f'pad=0,width={width},height={height},code=0x2011',
+               '-d', SUBDEV])
     csi_dev = '/dev/v4l-subdev0'
     if not os.path.exists(csi_dev):
         return
@@ -206,10 +211,12 @@ def _ensure_capture_link():
         return
 
     # Source pad 4 routes either to the ISP front end or to the bypass capture
-    # node, not both. This viewer uses the bypass path.
-    for link, required in ((["'csi2':4 -> 'pisp-fe':0 [0]"], False),
-                           (["'csi2':4 -> 'rp1-cfe-csi2_ch0':0 [1]"], True)):
-        cmd = ['media-ctl', '-d', media_dev, '-l', link[0]]
+    # node, not both. This viewer uses the bypass path. Reset all links first:
+    # libcamera leaves the front end links enabled, and the CFE does not start
+    # until every node with an enabled link streams.
+    for args, required in ((['-r'], False),
+                           (['-l', "'csi2':4 -> 'rp1-cfe-csi2_ch0':0 [1]"], True)):
+        cmd = ['media-ctl', '-d', media_dev] + args
         _log(f'CMD: {" ".join(cmd)}')
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0 and required:
