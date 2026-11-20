@@ -651,3 +651,30 @@ index 289c819b..5ec5aaba 100644
  		cfe_[Cfe::Output0].setFlags(StreamFlag::Needs16bitEndianSwap);
  		LOG(RPI, Warning)
  			<< "The sensor is configured for a 16-bit output, statistics"
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index f097d6ca..dbfeb3ce 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -471,6 +471,22 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 			},
+ 			.sensorDelays = { },
+ 		} },
++		{ "rs300", {
++			/* Mini2 / WN2 thermal module, 12 um microbolometer pitch. */
++			.unitCellSize = { 12000, 12000 },
++			.testPatternModes = { },
++			/*
++			 * The module ignores exposure, gain and blanking; the driver
++			 * accepts the controls only for libcamera. These are the
++			 * CameraSensor defaults, so behaviour does not change.
++			 */
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 1,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
+ 		{ "vd56g3", {
+ 			.unitCellSize = { 2610, 2610 },
+ 			.testPatternModes = {
