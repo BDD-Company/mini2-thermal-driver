@@ -3188,13 +3188,14 @@ static int rs300_init_controls(struct rs300 *rs300)
     static const s64 link_freq_menu[] = {
         RS300_LINK_RATE  // Single link frequency for testing
     };
+    struct v4l2_fwnode_device_properties props;
     int ret;
     u64 pixel_rate;
 
     dev_dbg(&client->dev, "Initializing controls");
 
     ctrl_hdlr = &rs300->ctrl_handler;
-    ret = v4l2_ctrl_handler_init(ctrl_hdlr, 26);  /* 22 controls + HBLANK + VBLANK + EXPOSURE + ANALOGUE_GAIN */
+    ret = v4l2_ctrl_handler_init(ctrl_hdlr, 28);  /* 22 controls + HBLANK + VBLANK + EXPOSURE + ANALOGUE_GAIN + ORIENTATION + ROTATION */
     if (ret) {
         dev_err(&client->dev, "Failed to init ctrl handler: %d", ret);
         return ret;
@@ -3284,6 +3285,16 @@ static int rs300_init_controls(struct rs300 *rs300)
     rs300->hook_edge = v4l2_ctrl_new_custom(ctrl_hdlr, &hook_edge_ctrl, NULL);
     rs300->frame_rate = v4l2_ctrl_new_custom(ctrl_hdlr, &frame_rate_ctrl, NULL);
     rs300->analog_output_fmt = v4l2_ctrl_new_custom(ctrl_hdlr, &analog_output_fmt_ctrl, NULL);
+
+    /*
+     * Camera orientation and mounting rotation from the device tree
+     * ("orientation" and "rotation" properties). libcamera reports their
+     * absence as a driver defect.
+     */
+    ret = v4l2_fwnode_device_parse(&client->dev, &props);
+    if (ret)
+        goto error;
+    v4l2_ctrl_new_fwnode_properties(ctrl_hdlr, &rs300_ctrl_ops, &props);
 
     /* Check for errors */
     if (ctrl_hdlr->error) {

@@ -52,6 +52,11 @@
                 VANA-supply = <&cam0_reg>;      /* 2.8v */
                 VDIG-supply = <&cam_dummy_reg>;
                 VDDL-supply = <&cam_dummy_reg>;
+
+                /* Camera location and mounting rotation, reported to
+                 * libcamera. 2 = external; see the overrides below. */
+                orientation = <2>;
+                rotation = <0>;
                 
                 port {
                     cam_endpoint: endpoint {
@@ -89,6 +94,8 @@
     // Overrides
     __overrides__ {
         media-controller = <&csi>,"brcm,media-controller?";
+        rotation = <&cam_node>,"rotation:0";
+        orientation = <&cam_node>,"orientation:0";
         cam1 = <&i2c_frag>, "target:0=",<&i2c_csi_dsi1>,
                <&csi_frag>, "target:0=",<&csi1>,
                <&clk_frag>, "target:0=",<&cam1_clk>,
