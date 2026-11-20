@@ -110,10 +110,10 @@ index 0bd1b5f2..f0cf13b6 100644
      'vd56g3.json',
 diff --git a/src/ipa/rpi/pisp/data/rs300.json b/src/ipa/rpi/pisp/data/rs300.json
 new file mode 100644
-index 00000000..35045224
+index 00000000..9db00e3d
 --- /dev/null
 +++ b/src/ipa/rpi/pisp/data/rs300.json
-@@ -0,0 +1,489 @@
+@@ -0,0 +1,496 @@
 +{
 +    "version": 2.0,
 +    "target": "pisp",
@@ -596,6 +596,13 @@ index 00000000..35045224
 +                "hi_level": 0.95,
 +                "hi_max": 65535,
 +                "ce_keep_median": 0
++            }
++        },
++        {
++            "rpi.sharpen": {
++                "threshold": 1.0,
++                "strength": 0.0,
++                "limit": 1.0
 +            }
 +        },
 +        {
