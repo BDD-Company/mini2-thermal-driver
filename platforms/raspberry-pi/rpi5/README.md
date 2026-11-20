@@ -130,9 +130,11 @@ Only the settled values mean anything. 600 frames is used here because it runs
 well past the startup climb; a shorter capture can end while the figure is still
 rising and look like a rate problem when there is none.
 
-The sensor settles to a nearly constant image on a static scene, so a capture
-can look frozen while the pipeline is healthy. To prove frames are live, trigger
-FFC while the capture is running rather than before it:
+Some modules send the same frame again and again after the stream starts,
+until they get an FFC. The capture above can then contain only identical
+frames although the pipeline is healthy. An FFC sent before the stream starts
+does not prevent this. Send the FFC while the capture runs, and discard the
+frames before it:
 
 ```bash
 ( sleep 5; v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl ffc_trigger=1 ) &
@@ -228,7 +230,7 @@ The `dtoverlay=rs300` line must not be inside a conditional section such as
 
 ### Black or frozen image
 
-Some modules freeze on the first frame until FFC is triggered. `rs300-stream` does this automatically. To trigger manually:
+Some modules freeze on the first frame until FFC is triggered. `rs300-stream` does this automatically. To trigger manually, send the FFC while the stream runs. An FFC sent before the stream starts has no effect on this freeze:
 
 ```bash
 v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl ffc_trigger=1
