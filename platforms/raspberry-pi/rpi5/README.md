@@ -108,6 +108,11 @@ v4l2-ctl -d /dev/video0 --set-fmt-video=width=384,height=288,pixelformat=YUYV \
 ls -l /tmp/capture.yuv
 ```
 
+Write the capture to RAM, not to the SD card. On Raspberry Pi OS `/tmp` is on
+the SD card, and a slow card cannot write 13 MB/s at 60 fps. The capture then
+reports about 40 to 55 fps although the sensor sends 60. If you see that, use
+`/dev/shm/capture.yuv` in place of `/tmp/capture.yuv` in these examples.
+
 A 384x288 YUYV frame is 221184 bytes, so 600 frames is exactly 132710400 bytes.
 Any other size means frames were dropped.
 
@@ -200,6 +205,26 @@ i2cdetect -y 10    # expect device at 0x3c
 dtoverlay -l       # expect rs300 listed
 grep rs300 /boot/firmware/config.txt
 ```
+
+The camera gets power only while a sensor driver holds it, so `i2cdetect` shows
+nothing when the rs300 driver did not probe. To scan with power on, set the
+power enable line high (GPIO34 for cam0, GPIO46 for cam1), scan, and set it low
+again:
+
+```bash
+sudo pinctrl set 34 op dh; sleep 1
+i2cdetect -y 10    # expect device at 0x3c
+sudo pinctrl set 34 op dl
+```
+
+Another sensor overlay on the same port stops the rs300 overlay from working.
+If `dmesg` shows a different sensor (for example
+`imx477 10-001a: failed to read chip id 477, with error -121`), comment out
+that `dtoverlay=` line in `/boot/firmware/config.txt` and reboot.
+
+The `dtoverlay=rs300` line must not be inside a conditional section such as
+`[cm4]` or `[cm5]`, because then the board ignores it. The installer writes
+`[all]` before the line to prevent this.
 
 ### Black or frozen image
 
