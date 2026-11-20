@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+CFG=/boot/firmware/config.txt
+
+# The overlay file is gone, so drop the line that loads it.
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+	if [ -f "$CFG" ]; then
+		sed -i '/^dtoverlay=rs300$/d' "$CFG"
+	fi
+	systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+exit 0

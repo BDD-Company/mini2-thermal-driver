@@ -1,0 +1,653 @@
+diff --git a/src/ipa/rpi/cam_helper/cam_helper_rs300.cpp b/src/ipa/rpi/cam_helper/cam_helper_rs300.cpp
+new file mode 100644
+index 00000000..5eb7db13
+--- /dev/null
++++ b/src/ipa/rpi/cam_helper/cam_helper_rs300.cpp
+@@ -0,0 +1,42 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++/*
++ * Camera helper for the rs300 (Mini2 / WN2) thermal camera module.
++ *
++ * The module has no exposure or gain settings and no embedded data. The
++ * driver accepts the exposure, gain and blanking controls and ignores them,
++ * so this helper reports unity analogue gain and no integration margin.
++ */
++
++#include "cam_helper.h"
++
++using namespace RPiController;
++
++class CamHelperRs300 : public CamHelper
++{
++public:
++	CamHelperRs300();
++	uint32_t gainCode(double gain) const override;
++	double gain(uint32_t gainCode) const override;
++};
++
++CamHelperRs300::CamHelperRs300()
++	: CamHelper({}, 0)
++{
++}
++
++uint32_t CamHelperRs300::gainCode([[maybe_unused]] double gain) const
++{
++	return 1;
++}
++
++double CamHelperRs300::gain([[maybe_unused]] uint32_t gainCode) const
++{
++	return 1.0;
++}
++
++static CamHelper *create()
++{
++	return new CamHelperRs300();
++}
++
++static RegisterCamHelper reg("rs300", &create);
+diff --git a/src/ipa/rpi/cam_helper/meson.build b/src/ipa/rpi/cam_helper/meson.build
+index 4eee984b..1dcf44a0 100644
+--- a/src/ipa/rpi/cam_helper/meson.build
++++ b/src/ipa/rpi/cam_helper/meson.build
+@@ -15,6 +15,7 @@ rpi_ipa_cam_helper_sources = files([
+     'cam_helper_ov64a40.cpp',
+     'cam_helper_ov7251.cpp',
+     'cam_helper_ov9281.cpp',
++    'cam_helper_rs300.cpp',
+     'cam_helper_vd56g3.cpp',
+     'md_parser_smia.cpp',
+ ])
+diff --git a/src/ipa/rpi/controller/rpi/contrast.cpp b/src/ipa/rpi/controller/rpi/contrast.cpp
+index fe866a54..060e43a8 100644
+--- a/src/ipa/rpi/controller/rpi/contrast.cpp
++++ b/src/ipa/rpi/controller/rpi/contrast.cpp
+@@ -53,6 +53,8 @@ int Contrast::read(const libcamera::YamlObject &params)
+ 	config_.hiHistogram = params["hi_histogram"].get<double>(0.95);
+ 	config_.hiLevel = params["hi_level"].get<double>(0.95);
+ 	config_.hiMax = params["hi_max"].get<double>(2000);
++	/* 0 gives a plain two-point stretch, as thermal images need. */
++	config_.ceKeepMedian = params["ce_keep_median"].get<int>(1);
+ 
+ 	config_.gammaCurve = params["gamma_curve"].get<ipa::Pwl>(ipa::Pwl{});
+ 	return config_.gammaCurve.empty() ? -EINVAL : 0;
+@@ -119,8 +121,10 @@ ipa::Pwl computeStretchCurve(Histogram const &histogram,
+ 	 * Keep the mid-point (median) in the same place, though, to limit the
+ 	 * apparent amount of global brightness shift.
+ 	 */
+-	double mid = histogram.quantile(0.5) * (65536 / histogram.bins());
+-	enhance.append(mid, mid);
++	if (config.ceKeepMedian) {
++		double mid = histogram.quantile(0.5) * (65536 / histogram.bins());
++		enhance.append(mid, mid);
++	}
+ 
+ 	/*
+ 	 * If the top to the histogram is empty, try to pull the pixel values
+diff --git a/src/ipa/rpi/controller/rpi/contrast.h b/src/ipa/rpi/controller/rpi/contrast.h
+index c0f7db98..c03c4b82 100644
+--- a/src/ipa/rpi/controller/rpi/contrast.h
++++ b/src/ipa/rpi/controller/rpi/contrast.h
+@@ -27,6 +27,7 @@ struct ContrastConfig {
+ 	double hiHistogram;
+ 	double hiLevel;
+ 	double hiMax;
++	bool ceKeepMedian;
+ 	libcamera::ipa::Pwl gammaCurve;
+ };
+ 
+diff --git a/src/ipa/rpi/pisp/data/meson.build b/src/ipa/rpi/pisp/data/meson.build
+index 0bd1b5f2..f0cf13b6 100644
+--- a/src/ipa/rpi/pisp/data/meson.build
++++ b/src/ipa/rpi/pisp/data/meson.build
+@@ -25,6 +25,7 @@ conf_files = files([
+     'ov5647_noir.json',
+     'ov64a40.json',
+     'ov9281_mono.json',
++    'rs300.json',
+     'se327m12.json',
+     'uncalibrated.json',
+     'vd56g3.json',
+diff --git a/src/ipa/rpi/pisp/data/rs300.json b/src/ipa/rpi/pisp/data/rs300.json
+new file mode 100644
+index 00000000..35045224
+--- /dev/null
++++ b/src/ipa/rpi/pisp/data/rs300.json
+@@ -0,0 +1,489 @@
++{
++    "version": 2.0,
++    "target": "pisp",
++    "algorithms": [
++        {
++            "rpi.black_level": {
++                "black_level": 0
++            }
++        },
++        {
++            "rpi.lux": {
++                "reference_shutter_speed": 2000,
++                "reference_gain": 1.0,
++                "reference_aperture": 1.0,
++                "reference_lux": 800,
++                "reference_Y": 20000
++            }
++        },
++        {
++            "rpi.noise": {
++                "reference_constant": 0,
++                "reference_slope": 3.5
++            }
++        },
++        {
++            "rpi.denoise": {
++                "normal": {
++                    "sdn": {
++                        "deviation": 0.6,
++                        "strength": 0.95,
++                        "deviation2": 3.2,
++                        "deviation_no_tdn": 3.2,
++                        "strength_no_tdn": 0.95
++                    },
++                    "cdn": {
++                        "deviation": 200,
++                        "strength": 0.3
++                    },
++                    "tdn": {
++                        "deviation": 1.0,
++                        "threshold": 0.05
++                    }
++                },
++                "hdr": {
++                    "sdn": {
++                        "deviation": 0.6,
++                        "strength": 0.95,
++                        "deviation2": 3.2,
++                        "deviation_no_tdn": 3.2,
++                        "strength_no_tdn": 0.95
++                    },
++                    "cdn": {
++                        "deviation": 200,
++                        "strength": 0.3
++                    },
++                    "tdn": {
++                        "deviation": 1.0,
++                        "threshold": 0.05
++                    }
++                },
++                "night": {
++                    "sdn": {
++                        "deviation": 0.6,
++                        "strength": 0.95,
++                        "deviation2": 3.2,
++                        "deviation_no_tdn": 3.2,
++                        "strength_no_tdn": 0.95
++                    },
++                    "cdn": {
++                        "deviation": 200,
++                        "strength": 0.3
++                    },
++                    "tdn": {
++                        "deviation": 1.0,
++                        "threshold": 0.05
++                    }
++                }
++            }
++        },
++        {
++            "rpi.agc": {
++                "metering_modes": {
++                    "centre-weighted": {
++                        "weights": [
++                            0,
++                            0,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            0,
++                            0,
++                            0,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            0,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            2,
++                            2,
++                            3,
++                            3,
++                            3,
++                            2,
++                            2,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            2,
++                            3,
++                            3,
++                            3,
++                            3,
++                            3,
++                            2,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            3,
++                            3,
++                            3,
++                            4,
++                            3,
++                            3,
++                            3,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            3,
++                            3,
++                            4,
++                            4,
++                            4,
++                            3,
++                            3,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            3,
++                            3,
++                            3,
++                            4,
++                            3,
++                            3,
++                            3,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            2,
++                            3,
++                            3,
++                            3,
++                            3,
++                            3,
++                            2,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            2,
++                            2,
++                            3,
++                            3,
++                            3,
++                            2,
++                            2,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            0,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            2,
++                            2,
++                            2,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            0,
++                            0,
++                            0,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            1,
++                            0,
++                            0
++                        ]
++                    }
++                },
++                "exposure_modes": {
++                    "normal": {
++                        "shutter": [
++                            10000,
++                            10000
++                        ],
++                        "gain": [
++                            1.0,
++                            1.0
++                        ]
++                    },
++                    "short": {
++                        "shutter": [
++                            10000,
++                            10000
++                        ],
++                        "gain": [
++                            1.0,
++                            1.0
++                        ]
++                    },
++                    "long": {
++                        "shutter": [
++                            10000,
++                            10000
++                        ],
++                        "gain": [
++                            1.0,
++                            1.0
++                        ]
++                    }
++                },
++                "constraint_modes": {
++                    "normal": [
++                        {
++                            "bound": "LOWER",
++                            "q_lo": 0.98,
++                            "q_hi": 1.0,
++                            "y_target": [
++                                0,
++                                0.4,
++                                1000,
++                                0.4
++                            ]
++                        }
++                    ]
++                },
++                "y_target": [
++                    0,
++                    1.0,
++                    100000,
++                    1.0
++                ],
++                "max_digital_gain": 1.0
++            }
++        },
++        {
++            "rpi.contrast": {
++                "ce_enable": 1,
++                "gamma_curve": [
++                    0,
++                    0,
++                    512,
++                    2518,
++                    1024,
++                    5033,
++                    1536,
++                    7175,
++                    2048,
++                    9309,
++                    2560,
++                    10814,
++                    3072,
++                    12312,
++                    3584,
++                    13773,
++                    4096,
++                    15225,
++                    4608,
++                    16566,
++                    5120,
++                    17899,
++                    5632,
++                    19221,
++                    6144,
++                    20534,
++                    6656,
++                    21684,
++                    7168,
++                    22826,
++                    7680,
++                    24024,
++                    8192,
++                    25212,
++                    9216,
++                    27251,
++                    10240,
++                    29167,
++                    11264,
++                    30947,
++                    12288,
++                    32696,
++                    13312,
++                    34309,
++                    14336,
++                    35849,
++                    15360,
++                    37194,
++                    16384,
++                    38445,
++                    17408,
++                    39598,
++                    18432,
++                    40732,
++                    19456,
++                    41717,
++                    20480,
++                    42687,
++                    22528,
++                    44343,
++                    24576,
++                    45871,
++                    26624,
++                    47222,
++                    28672,
++                    48441,
++                    30720,
++                    49460,
++                    32768,
++                    50470,
++                    34816,
++                    51476,
++                    36864,
++                    52480,
++                    38912,
++                    53382,
++                    40960,
++                    54294,
++                    43008,
++                    55155,
++                    45056,
++                    56035,
++                    47104,
++                    56920,
++                    49152,
++                    57824,
++                    51200,
++                    58737,
++                    53248,
++                    59666,
++                    55296,
++                    60604,
++                    57344,
++                    61558,
++                    59392,
++                    62529,
++                    61440,
++                    63516,
++                    63488,
++                    64519,
++                    65535,
++                    65535
++                ],
++                "lo_histogram": 0.01,
++                "lo_level": 0.015,
++                "lo_max": 65535,
++                "hi_histogram": 0.95,
++                "hi_level": 0.95,
++                "hi_max": 65535,
++                "ce_keep_median": 0
++            }
++        },
++        {
++            "rpi.sync": {}
++        }
++    ]
++}
+diff --git a/src/libcamera/pipeline/rpi/common/pipeline_base.cpp b/src/libcamera/pipeline/rpi/common/pipeline_base.cpp
+index 09d30f34..2285a7b1 100644
+--- a/src/libcamera/pipeline/rpi/common/pipeline_base.cpp
++++ b/src/libcamera/pipeline/rpi/common/pipeline_base.cpp
+@@ -796,10 +796,22 @@ int PipelineHandlerBase::registerCamera(std::unique_ptr<RPi::CameraData> &camera
+ 	if (!data->sensor_)
+ 		return -EINVAL;
+ 
+-	/* Populate the map of sensor supported formats and sizes. */
+-	for (auto const mbusCode : data->sensor_->mbusCodes())
++	/*
++	 * Populate the map of sensor supported formats and sizes. Only raw
++	 * (Bayer or mono) formats can feed the ISP, so skip any others, such
++	 * as YUV formats from sensors with an on-chip processor.
++	 */
++	for (auto const mbusCode : data->sensor_->mbusCodes()) {
++		if (!BayerFormat::fromMbusCode(mbusCode).isValid())
++			continue;
+ 		data->sensorFormats_.emplace(mbusCode,
+ 					     data->sensor_->sizes(mbusCode));
++	}
++
++	if (data->sensorFormats_.empty()) {
++		LOG(RPI, Error) << "Sensor has no raw formats";
++		return -EINVAL;
++	}
+ 
+ 	/*
+ 	 * Enumerate all the Video Mux/Bridge devices across the sensor -> Fr
+diff --git a/src/libcamera/pipeline/rpi/pisp/pisp.cpp b/src/libcamera/pipeline/rpi/pisp/pisp.cpp
+index 289c819b..5ec5aaba 100644
+--- a/src/libcamera/pipeline/rpi/pisp/pisp.cpp
++++ b/src/libcamera/pipeline/rpi/pisp/pisp.cpp
+@@ -1450,7 +1450,13 @@ int PiSPCameraData::platformConfigure(const RPi::RPiCameraConfiguration *rpiConf
+ 	 * contents to account for the HW missing this feature.
+ 	 */
+ 	cfe_[Cfe::Output0].clearFlags(StreamFlag::Needs16bitEndianSwap);
+-	if (MediaBusFormatInfo::info(rpiConfig->sensorFormat_.code).bitsPerPixel == 16) {
++	/*
++	 * The rs300 thermal module sends 16-bit pixels least significant byte
++	 * first, so its buffers are already in the order the ISP and the
++	 * statistics expect. It needs no swap.
++	 */
++	if (MediaBusFormatInfo::info(rpiConfig->sensorFormat_.code).bitsPerPixel == 16 &&
++	    sensor_->model() != "rs300") {
+ 		cfe_[Cfe::Output0].setFlags(StreamFlag::Needs16bitEndianSwap);
+ 		LOG(RPI, Warning)
+ 			<< "The sensor is configured for a 16-bit output, statistics"

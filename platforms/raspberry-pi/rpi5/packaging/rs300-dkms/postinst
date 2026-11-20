@@ -1,0 +1,42 @@
+#!/bin/sh
+# rs300-dkms: build the module, enable the overlay and the capture-link service.
+set -e
+
+NAME=rs300
+VERSION=@DKMS_VERSION@
+CFG=/boot/firmware/config.txt
+
+if [ "$1" = configure ]; then
+	# install.sh registered the module under the same name and version.
+	# Register it again from this package's source.
+	dkms remove -m "$NAME" -v "$VERSION" --all >/dev/null 2>&1 || true
+	dkms add -m "$NAME" -v "$VERSION"
+	if ! dkms install -m "$NAME" -v "$VERSION"; then
+		echo "rs300-dkms: module build failed. Install linux-headers-rpi-2712" \
+			"(or the headers for $(uname -r)), then run:" >&2
+		echo "  sudo dpkg-reconfigure rs300-dkms" >&2
+	fi
+
+	# Enable the overlay. [all] closes a trailing [cm4]/[cm5] section,
+	# which would otherwise make a Pi 5 Model B ignore the line.
+	if [ -f "$CFG" ] && ! grep -q '^dtoverlay=rs300$' "$CFG"; then
+		cp "$CFG" "$CFG.rs300-dkms.bak"
+		printf '\n[all]\ndtoverlay=rs300\n' >> "$CFG"
+		echo "rs300-dkms: added dtoverlay=rs300 to $CFG (backup: $CFG.rs300-dkms.bak)"
+	fi
+
+	# Another sensor overlay on cam0 claims the port the rs300 uses.
+	if [ -f "$CFG" ] && grep -Eq '^dtoverlay=(imx|ov)[0-9a-z_]*(,cam0)?$' "$CFG"; then
+		echo "rs300-dkms: WARNING: $CFG enables another camera overlay:" >&2
+		grep -En '^dtoverlay=(imx|ov)[0-9a-z_]*(,cam0)?$' "$CFG" >&2
+		echo "rs300-dkms: comment it out if that camera is on cam0." >&2
+	fi
+
+	udevadm control --reload-rules >/dev/null 2>&1 || true
+	systemctl daemon-reload >/dev/null 2>&1 || true
+	systemctl enable rs300-media-setup.service >/dev/null 2>&1 || true
+
+	echo "rs300-dkms: reboot to load the driver."
+fi
+
+exit 0

@@ -44,10 +44,10 @@ if [ -z "$MEDIA_DEV" ]; then
 fi
 
 # Source pad 4 of the CSI-2 receiver can route either to the ISP front end or to
-# the bypass capture node, but not to both. This driver targets the bypass path,
-# so the front end link is dropped first. That link is normally already disabled;
-# the failure is tolerated so this stays safe on systems where it is absent.
-media-ctl -d "$MEDIA_DEV" -l "'csi2':4 -> 'pisp-fe':0 [0]" 2>/dev/null || true
+# the bypass capture node, but not to both. This driver targets the bypass path.
+# Reset all links first: libcamera leaves the front end links enabled, and the
+# CFE does not start until every node with an enabled link streams.
+media-ctl -d "$MEDIA_DEV" -r
 
 if ! media-ctl -d "$MEDIA_DEV" -l "'csi2':4 -> 'rp1-cfe-csi2_ch0':0 [1]"; then
     echo "rs300-media-setup: failed to enable the bypass capture link on $MEDIA_DEV" >&2
@@ -55,3 +55,18 @@ if ! media-ctl -d "$MEDIA_DEV" -l "'csi2':4 -> 'rp1-cfe-csi2_ch0':0 [1]"; then
 fi
 
 echo "rs300-media-setup: bypass capture link enabled on $MEDIA_DEV"
+
+# libcamera (rpicam-apps, cam) leaves the sensor in its raw Y16 mode. Set YUYV
+# again: the driver switches the module to match and passes the format on to
+# the CSI-2 receiver. media-ctl -V does not reach the sensor here, so use
+# v4l2-ctl on the sensor subdev.
+SENSOR=$(media-ctl -d "$MEDIA_DEV" -p | grep -o "rs300 [0-9]*-[0-9a-f]*" | head -1)
+SENSOR_DEV=$(media-ctl -d "$MEDIA_DEV" -e "$SENSOR")
+read -r WIDTH HEIGHT < <(v4l2-ctl -d "$SENSOR_DEV" --get-subdev-fmt pad=0 |
+    awk -F'[:/ ]+' '/Width\/Height/ {print $3, $4}')
+if ! v4l2-ctl -d "$SENSOR_DEV" --set-subdev-fmt \
+        "pad=0,width=$WIDTH,height=$HEIGHT,code=0x2011" >/dev/null 2>&1; then
+    echo "rs300-media-setup: failed to set YUYV on $SENSOR_DEV" >&2
+    exit 1
+fi
+echo "rs300-media-setup: sensor set to YUYV ${WIDTH}x${HEIGHT}"

@@ -613,7 +613,9 @@ install_device_tree() {
 
     # Add overlay to config (only if not present)
     if ! grep -q "dtoverlay=rs300" "$config_file"; then
-        if ! echo "dtoverlay=rs300" | sudo tee -a "$config_file" > /dev/null; then
+        # [all] closes any trailing conditional section ([cm4], [cm5], ...),
+        # which would otherwise make the board ignore the overlay.
+        if ! printf '[all]\ndtoverlay=rs300\n' | sudo tee -a "$config_file" > /dev/null; then
             print_error "Failed to update config.txt"
             print_warning "Restoring backup from: $config_backup"
             sudo cp "$config_backup" "$config_file"
