@@ -224,6 +224,15 @@ The tuning file stretches each frame between the 1st and 95th percentile of its
 histogram. The module sets its own exposure; libcamera's exposure and gain
 settings have no effect.
 
+- A stream takes about 3.3 seconds to start (the module settles, then the
+  driver sends an FFC). Give short commands time to get frames, for example
+  `rpicam-raw -t 6000`; with `-t 2000` it ends before the first frame.
+- `rpicam-raw` and the raw stream give the module's 16-bit values, least
+  significant byte first.
+- `rpicam-still -r` cannot write a DNG file: the rpicam-apps DNG writer
+  stops with `unsupported Bayer format` for 16-bit mono.
+- `rpicam-vid` runs at its default 30 fps unless you give `--framerate 60`.
+
 The patch does these things:
 
 - Adds a camera helper and a tuning file (`rs300.json`) for the rs300.
