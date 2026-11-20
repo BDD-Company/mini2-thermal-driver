@@ -266,7 +266,31 @@ settings have no effect.
   significant byte first.
 - `rpicam-still -r` cannot write a DNG file: the rpicam-apps DNG writer
   stops with `unsupported Bayer format` for 16-bit mono.
-- `rpicam-vid` runs at its default 30 fps unless you give `--framerate 60`.
+- The module sets the frame rate: `fps` in `/etc/modprobe.d/rs300.conf`, then
+  reboot. `rpicam-vid --framerate` does not change it; give the same value so
+  that the file header matches.
+
+### Recording video
+
+Lossless H.264 in an MP4 file (software encoder; the Pi 5 has no hardware
+H.264 encoder):
+
+```bash
+rpicam-vid -n -t 13000 --framerate 60 --width 384 --height 288 \
+  --codec libav --libav-video-codec libx264 \
+  --libav-video-codec-opts "qp=0;preset=ultrafast" \
+  -o thermal.mp4
+```
+
+`-t 13000` gives about 10 s of video after the 3.3 s start. Tested at 60 fps:
+581 frames 16.67 ms apart, about 8 MB per 10 s. With the module at `fps=30`
+and `--framerate 30`: 302 frames 33.3 ms apart, about 6.8 MB per 10 s.
+
+- `qp=0` is lossless. The file uses the H.264 High 4:4:4 Predictive profile,
+  which VLC, ffmpeg and mpv play, but browsers and many hardware players do not.
+- The MP4 holds the 8-bit image after the ISP. For the 16-bit module values,
+  use `rpicam-raw`.
+- `--save-pts` does not work with MP4 output.
 
 The patch does these things:
 
