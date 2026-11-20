@@ -9,7 +9,41 @@ Linux kernel driver for the Mini2 (aka WN2) thermal camera module on Raspberry P
 - 22-to-15 pin CSI ribbon cable
 - 5V/3A+ power supply
 
-## Install
+## Install from packages
+
+Two Debian packages install everything, including `rpicam-apps` support:
+
+```bash
+sudo apt install ./rs300-dkms_*_all.deb ./libcamera-rs300_*_arm64.deb
+sudo reboot
+rpicam-hello --list-cameras
+```
+
+- **`rs300-dkms`**: the DKMS kernel module, the device tree overlay (the
+  package adds `dtoverlay=rs300` to `/boot/firmware/config.txt`),
+  `rs300-stream`, the udev rule and `rs300-media-setup.service`. The module
+  settings are in `/etc/modprobe.d/rs300.conf`; the default is `mode=2 fps=60`
+  (384x288). Edit that file for a 640x512 or 256x192 module and reboot.
+- **`libcamera-rs300`**: libcamera with rs300 support, in `/opt/libcamera-rs300`.
+  See [libcamera and rpicam-apps](#libcamera-and-rpicam-apps).
+
+`libcamera-rs300` depends on the exact system `libcamera0.5` version it was
+built for (0.5.2+rpt20250903-1~bpo12+1). If an upgrade brings a newer
+libcamera, apt holds it back or offers to remove `libcamera-rs300`; build a
+new package for the new version (below).
+
+To remove: `sudo apt remove rs300-dkms libcamera-rs300` and reboot. This also
+removes the `dtoverlay=rs300` line. If you installed with `install.sh` before,
+first follow [Uninstall](#uninstall).
+
+To build the packages, run on a Raspberry Pi 5 (Raspberry Pi OS bookworm,
+arm64). The libcamera build takes about 2 minutes:
+
+```bash
+packaging/build-debs.sh          # writes packaging/dist/*.deb
+```
+
+## Install from source
 
 ```bash
 git clone https://github.com/Kodrea/mini2-thermal-driver.git
@@ -44,8 +78,8 @@ sudo ./install.sh --auto 256 25 y   # 256x192 @ 25fps
 - **Module config** for resolution and FPS stored in `/etc/modprobe.d/rs300.conf`
 - **`rs300-media-setup.service`** which enables the CSI-2 capture link on every boot
 
-For `rpicam-apps`, Picamera2 and other libcamera applications, also build the
-patched libcamera. See [libcamera and rpicam-apps](#libcamera-and-rpicam-apps).
+For `rpicam-apps`, Picamera2 and other libcamera applications, also install
+the `libcamera-rs300` package. See [libcamera and rpicam-apps](#libcamera-and-rpicam-apps).
 
 ## After Reboot
 
@@ -195,10 +229,10 @@ The viewer auto-detects the sensor resolution (256x192, 384x288, or 640x512) at 
 
 The libcamera package in Raspberry Pi OS cannot use this camera: `rpicam-hello
 --list-cameras` and `cam --list` show no cameras. To make `rpicam-apps`, `cam`,
-Picamera2 and GStreamer `libcamerasrc` work, build the patched libcamera:
+Picamera2 and GStreamer `libcamerasrc` work, install the `libcamera-rs300`
+package (see [Install from packages](#install-from-packages)), then:
 
 ```bash
-helpers/build-libcamera-rs300.sh
 rpicam-hello --list-cameras
 ```
 
@@ -209,13 +243,14 @@ Expected output:
     Modes: 'R16' : 384x288 [60.00 fps - (0, 0)/384x288 crop]
 ```
 
-The script builds the Raspberry Pi libcamera tree that matches the Raspberry Pi
-OS package (0.5.2+rpt20250903) with `helpers/libcamera-rs300.patch`, and
-installs it to `/usr/local`. The dynamic linker searches `/usr/local/lib`
-before `/usr/lib`, so every libcamera application loads this build. The system
-package is not changed. The build takes about 2 minutes on a Pi 5. If the
-system libcamera package is upgraded, run the script again with a matching
-`LIBCAMERA_REF`.
+The package holds the Raspberry Pi libcamera tree that matches the Raspberry
+Pi OS package (0.5.2+rpt20250903), built with `helpers/libcamera-rs300.patch`
+and installed to `/opt/libcamera-rs300`. Its file
+`/etc/ld.so.conf.d/00-libcamera-rs300.conf` makes the dynamic linker find this
+build before the system one, so every libcamera application loads it. The
+system package is not changed. For a different system libcamera version, build
+the package with a matching `LIBCAMERA_REF` and edit `LIBCAMERA_PKG_VERSION` in
+`packaging/build-debs.sh`.
 
 libcamera uses the module's raw 16-bit output (Y16) and the Pi 5 ISP. The
 module's own image processing (colour palettes, detail enhancement, noise
@@ -247,13 +282,6 @@ The driver changes that libcamera needs are in `src/rs300.c`: a frame
 descriptor, so that the receiver accepts the module's Y16 lines; Y16 selected
 through the format; writable blanking and gain controls; a pixel rate that
 gives the real frame rate.
-
-To remove the build:
-
-```bash
-grep -v '^#' ~/libcamera-rs300/build/meson-logs/install-log.txt | sudo xargs rm -f
-sudo ldconfig
-```
 
 ## Configuration
 
@@ -315,6 +343,9 @@ v4l2-ctl --list-devices
 
 ## Uninstall
 
+For the packages: `sudo apt remove rs300-dkms libcamera-rs300`. For an
+`install.sh` installation:
+
 ```bash
 sudo dkms remove -m rs300 -v 0.0.1 --all
 sudo rm -f /usr/local/bin/rs300-stream
@@ -348,5 +379,6 @@ sudo reboot
 | `helpers/rs300-stream.py` | Live viewer (GTK + GStreamer) |
 | `helpers/rs300-media-setup.sh` | Enables the CSI-2 capture link |
 | `helpers/rs300-media-setup.service` | Runs the capture link setup at boot |
-| `helpers/build-libcamera-rs300.sh` | Builds and installs libcamera with rs300 support |
+| `packaging/build-debs.sh` | Builds the `rs300-dkms` and `libcamera-rs300` packages |
+| `packaging/rs300-dkms/` | Install and remove scripts of `rs300-dkms` |
 | `helpers/libcamera-rs300.patch` | libcamera changes for rs300 (helper, tuning, pipeline) |

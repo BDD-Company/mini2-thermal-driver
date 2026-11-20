@@ -6,3 +6,5 @@ NOTES.md
 __pycache__/
 *.pyc
 *.tmp.*
+*.deb
+dist/
