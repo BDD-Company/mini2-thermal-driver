@@ -156,10 +156,10 @@ A 384x288 YUYV frame is 221184 bytes, so 600 frames is exactly 132710400 bytes.
 Any other size means frames were dropped.
 
 `v4l2-ctl` prints a frame rate as it captures. The figure is measured over each
-reporting interval, not over the run as a whole, and the stream takes roughly
-2.6 seconds to deliver its first frame. The first five values therefore climb
-from near zero while the stream starts, after which every value reads the
-configured rate:
+reporting interval, not over the run as a whole, and the stream takes about
+1.2 seconds to deliver live frames. The first values therefore climb from near
+zero while the stream starts, after which every value reads the configured
+rate:
 
 ```
 1.51 fps  8.64 fps  21.44 fps  29.14 fps  34.27 fps  60.00 fps  60.00 fps ...
@@ -171,9 +171,14 @@ rising and look like a rate problem when there is none.
 
 Some modules send the same frame again and again after the stream starts,
 until they get an FFC while they stream. The driver sends one at each stream
-start, before the first frame reaches the application. A static scene still
-changes very little from frame to frame. To prove that frames are live, send
-another FFC while the capture runs:
+start, and the stream-on call returns when it is done. Frames that arrived
+before that are still delivered: the first 4 to 6 frames of a V4L2 capture can
+be blank (an almost flat image) or a leftover frame from the previous stream.
+Skip them, or skip frames whose timestamp is before the stream-on call
+returned. libcamera applications are not affected.
+
+A static scene changes very little from frame to frame. To prove that frames
+are live, send another FFC while the capture runs:
 
 ```bash
 ( sleep 5; v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl ffc_trigger=1 ) &
@@ -259,9 +264,15 @@ The tuning file stretches each frame between the 1st and 95th percentile of its
 histogram. The module sets its own exposure; libcamera's exposure and gain
 settings have no effect.
 
-- A stream takes about 3.3 seconds to start (the module settles, then the
-  driver sends an FFC). Give short commands time to get frames, for example
-  `rpicam-raw -t 6000`; with `-t 2000` it ends before the first frame.
+- A stream takes about 1.2 seconds to deliver live frames (the module
+  starts, then the driver sends an FFC). After a frame rate change or a switch
+  from the YUYV tools it takes about 1.8 seconds, because the driver then also
+  sends the frame rate command. Give short commands time, for example
+  `rpicam-raw -t 3000`.
+- For a single still, use `rpicam-still --immediate` (about 1.4 s in total)
+  or `--zsl` (about 1.4 s, JPEG only). Without either option, rpicam-still
+  stops the preview stream and starts the camera again for the still, so it
+  pays the start-up time twice (about 2.5 s with `-t 1000`).
 - `rpicam-raw` and the raw stream give the module's 16-bit values, least
   significant byte first.
 - `rpicam-still -r` cannot write a DNG file: the rpicam-apps DNG writer
@@ -282,9 +293,10 @@ rpicam-vid -n -t 13000 --framerate 60 --width 384 --height 288 \
   -o thermal.mp4
 ```
 
-`-t 13000` gives about 10 s of video after the 3.3 s start. Tested at 60 fps:
-581 frames 16.67 ms apart, about 8 MB per 10 s. With the module at `fps=30`
-and `--framerate 30`: 302 frames 33.3 ms apart, about 6.8 MB per 10 s.
+`-t` includes the start-up time, so `-t 13000` gives about 11.5 s of video.
+Measured with the earlier, slower start-up (10 s of video): at 60 fps 581
+frames 16.67 ms apart, about 8 MB; with the module at `fps=30` and
+`--framerate 30`, 302 frames 33.3 ms apart, about 6.8 MB.
 
 - `qp=0` is lossless. The file uses the H.264 High 4:4:4 Predictive profile,
   which VLC, ffmpeg and mpv play, but browsers and many hardware players do not.
