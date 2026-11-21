@@ -935,7 +935,7 @@ static int rs300_set_output_mode(struct rs300 *rs300, int value)
     u8 status_buffer[1];
     int ret;
     int retry_count = 0;
-    const int max_retries = 5;
+    const int max_retries = 25;	/* 25 x 10 ms, as 5 x 50 ms before */
 
     dev_dbg(&client->dev, "Setting output mode to %d", value);
 
@@ -980,7 +980,7 @@ static int rs300_set_output_mode(struct rs300 *rs300, int value)
 
     /* Wait for completion */
     while (retry_count < max_retries) {
-        msleep(50);
+        msleep(10);
 
         ret = read_regs(client, 0x0200, status_buffer, 1);
         if (ret) {
