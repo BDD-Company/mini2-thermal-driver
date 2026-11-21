@@ -2629,7 +2629,8 @@ static int rs300_set_stream(struct v4l2_subdev *sd, int enable)
         for (stream_attempt = 0; stream_attempt < STREAM_START_RETRIES; stream_attempt++) {
             int retry = 0;
             int timeout_ms = poll_timeout_ms[stream_attempt];
-            int max_retries = timeout_ms / 100;
+            /* Poll in 10 ms steps: 100 ms steps cost up to 90 ms per start. */
+            int max_retries = timeout_ms / 10;
             int got_error = 0;
 
             dev_dbg(&client->dev, "Attempt %d/%d - polling for %dms",
@@ -2663,7 +2664,7 @@ static int rs300_set_stream(struct v4l2_subdev *sd, int enable)
                     }
                 }
 
-                msleep(100);
+                msleep(10);
                 retry++;
             }
 
