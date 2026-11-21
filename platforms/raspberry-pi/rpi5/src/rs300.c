@@ -2689,8 +2689,14 @@ static int rs300_set_stream(struct v4l2_subdev *sd, int enable)
                 break;
             }
 
-            // Clean success - stabilization sleep only here
-            msleep(stream_attempt < STREAM_START_RETRIES - 1 ? 2000 : 1000);
+            /*
+             * Clean success. Wait before the start-up FFC below: the
+             * module ignores an FFC sent right after the start (the image
+             * stays frozen). 500 ms is enough; a longer wait only delays
+             * the first live frame, because the FFC cannot finish before
+             * the module is ready anyway (measured 250-2000 ms).
+             */
+            msleep(500);
             dev_dbg(&client->dev, "Stream started successfully on attempt %d/%d",
                      stream_attempt + 1, STREAM_START_RETRIES);
             stream_success = 1;
