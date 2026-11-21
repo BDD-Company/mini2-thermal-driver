@@ -271,6 +271,7 @@ struct rs300 {
 
 	/* Streaming on/off */
 	bool streaming;
+	int fps_sent;	/* frame rate the module was last set to, 0 = none */
 
 	/* Boot-time format propagation to the CSI-2 receiver */
 	struct delayed_work propagate_work;
@@ -1937,6 +1938,11 @@ static int rs300_set_ctrl(struct v4l2_ctrl *ctrl)
         break;
     case V4L2_CID_CUSTOM_BASE + 7:  /* Output Mode */
         ret = rs300_set_output_mode(rs300, ctrl->val);
+        /*
+         * After an output mode change the module sends flat frames until
+         * it gets the FPS command again, so make the next start send it.
+         */
+        rs300->fps_sent = 0;
         break;
     case V4L2_CID_CUSTOM_BASE + 8:  /* Autoshutter enable/disable */
         ret = rs300_set_autoshutter(rs300, ctrl->val);
@@ -2484,11 +2490,11 @@ static int rs300_set_fps(struct rs300 *rs300, int fps)
     /* FPS command needs longer timeout (4500ms total via 15 retries × 300ms) */
     ret = rs300_send_command(rs300, 0x10, 0x10, 0x46, params, 3, 4500);
 
-    /* Note: FPS command always returns 0 even on error (legacy behavior) */
+    /* A failure is only logged; the caller retries on the next start. */
     if (ret)
         dev_warn(&client->dev, "FPS command failed: %d", ret);
 
-    return 0;
+    return ret;
 }
 
 static int rs300_set_stream(struct v4l2_subdev *sd, int enable)
@@ -2554,13 +2560,13 @@ static int rs300_set_stream(struct v4l2_subdev *sd, int enable)
             0x00, 0x00
         };
 
-        // Set FPS first
-        ret = rs300_set_fps(rs300, fps);
-        if (ret) {
-            dev_err(&client->dev, "Failed to set camera to %d fps: %d", fps, ret);
-            goto error_unlock;
-        }
-        dev_dbg(&client->dev, "FPS is set to %d", fps);
+        /*
+         * The module stays powered from probe to remove and keeps its frame
+         * rate, so send the FPS command (about 520 ms) only when the rate
+         * or the output mode changed since it was last sent.
+         */
+        if (rs300->fps_sent != fps && !rs300_set_fps(rs300, fps))
+            rs300->fps_sent = fps;
 
         /* SECURITY FIX: Don't set streaming flag yet - wait for hardware success */
         /* Removed: rs300->streaming = enable; (was set too early) */
